@@ -1,0 +1,94 @@
+import numpy as np
+import random
+from scipy.spatial import distance
+
+class PathPlanning:
+
+    def __init__(self, start, goal, obstacles, obstacle_free_distance=2.0, num_samples=1000, k=10, max_edge_length=10.0):
+        self.start = start
+        self.goal = goal
+        self.obstacles = obstacles
+        self.obstacle_free_distance = obstacle_free_distance
+        self.num_samples = num_samples
+        self.k = k
+        self.max_edge_length = max_edge_length
+        self.graph = self.construct_prm()
+
+    def construct_prm(self):
+        graph = {}
+        graph[0] = self.start
+        graph[1] = self.goal
+
+        # Sample random points
+        for i in range(2, self.num_samples):
+            p = self.sample_point()
+            if self.check_collision(p):
+                continue
+            graph[i] = p
+
+        # Connect nearest neighbors
+        for i in range(len(graph)):
+            distances = []
+            for j in range(len(graph)):
+                if i == j:
+                    continue
+                d = distance.euclidean(graph[i], graph[j])
+                distances.append((j, d))
+            distances.sort(key=lambda x: x[1])
+            for j, d in distances[:self.k]:
+                if self.check_collision_between(graph[i], graph[j]):
+                    continue
+                graph[i][j] = d
+                graph[j][i] = d
+
+        return graph
+
+    def sample_point(self):
+        return [random.uniform(0, 100), random.uniform(0, 100), random.uniform(0, 100)]
+
+    def check_collision(self, point):
+        for obstacle in self.obstacles:
+            if self.check_collision_between(point, obstacle):
+                return True
+        return False
+
+    def check_collision_between(self, p1, p2):
+        dist = distance.euclidean(p1, p2)
+        if dist > self.obstacle_free_distance:
+            return False
+        else:
+            return True
+
+    def find_path(self):
+        # Find nearest node to start and goal
+        start_node = min(self.graph, key=lambda x: distance.euclidean(self.graph[x], self.start))
+        goal_node = min(self.graph, key=lambda x: distance.euclidean(self.graph[x], self.goal))
+
+        # Run A* search on PRM graph
+        closed_set = set()
+        open_set = {start_node}
+        came_from = {}
+        g_score = {start_node: 0}
+        f_score = {start_node: distance.euclidean(self.graph[start_node], self.goal)}
+        while open_set:
+            current = min(open_set, key=lambda x: f_score[x])
+            if current == goal_node:
+                path = [current]
+                while path[-1] != start_node:
+                    path.append(came_from[path[-1]])
+                return [self.graph[node] for node in reversed(path)]
+            open_set.remove(current)
+            closed_set.add(current)
+            for neighbor, cost in self.graph[current].items():
+                if neighbor in closed_set:
+                    continue
+                tentative_g_score = g_score[current] + cost
+                if neighbor not in open_set:
+                    open_set.add(neighbor)
+                elif tentative_g_score >= g_score[neighbor]:
+                    continue
+                came_from[neighbor] = current
+                g_score[neighbor] = tentative_g_score
+                f_score[neighbor] = tentative_g_score + distance.euclidean(self.graph[neighbor], self.goal)
+
+        return None

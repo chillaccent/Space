@@ -1,0 +1,93 @@
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <algorithm>
+
+using namespace std;
+
+// Define a struct to represent a puzzle piece with position and ID
+struct PuzzlePiece {
+    int id;
+    double x;
+    double y;
+    double z;
+};
+
+// Define a struct to represent an edge between two puzzle pieces
+struct Edge {
+    PuzzlePiece from;
+    PuzzlePiece to;
+    double cost;
+};
+
+// Define a function to compute the Euclidean distance between two puzzle pieces
+double distance(PuzzlePiece p1, PuzzlePiece p2) {
+    return sqrt(pow(p1.x - p2.x, 2) + pow(p1.y - p2.y, 2) + pow(p1.z - p2.z, 2));
+}
+
+// Define a function to check if a puzzle piece is in the way of the vehicle
+bool inTheWay(PuzzlePiece piece, vector<PuzzlePiece> piecesInWay) {
+    for (auto p : piecesInWay) {
+        if (distance(piece, p) < 2.0) {  // Assume pieces are 2 units apart
+            return true;
+        }
+    }
+    return false;
+}
+
+// Define the PRM algorithm function
+vector<PuzzlePiece> prm(vector<PuzzlePiece> pieces, vector<PuzzlePiece> piecesInWay) {
+    // Generate a graph of nodes connected by edges using the PRM algorithm
+    vector<Edge> graph;
+    for (auto p1 : pieces) {
+        for (auto p2 : pieces) {
+            if (p1.id != p2.id && !inTheWay(p1, piecesInWay) && !inTheWay(p2, piecesInWay)) {
+                double dist = distance(p1, p2);
+                if (dist < 10.0) {  // Assume maximum distance between pieces is 10 units
+                    Edge e = {p1, p2, dist};
+                    graph.push_back(e);
+                }
+            }
+        }
+    }
+
+    // Sort edges by cost in ascending order
+    sort(graph.begin(), graph.end(), [](const Edge & a, const Edge & b) {
+        return a.cost < b.cost;
+    });
+
+    // Find the shortest path through the graph using Dijkstra's algorithm
+    vector<PuzzlePiece> path;
+    vector<double> cost(pieces.size(), INFINITY);
+    vector<int> prev(pieces.size(), -1);
+    int start = 0;
+    cost[start] = 0.0;
+    while (start != -1) {
+        for (auto e : graph) {
+            if (e.from.id == pieces[start].id && cost[start] + e.cost < cost[e.to.id]) {
+                cost[e.to.id] = cost[start] + e.cost;
+                prev[e.to.id] = start;
+            }
+        }
+        double minCost = INFINITY;
+        start = -1;
+        for (int i = 0; i < cost.size(); i++) {
+            if (cost[i] < minCost) {
+                minCost = cost[i];
+                start = i;
+            }
+        }
+    }
+
+    // Build the path by traversing the prev array
+    int current = pieces.size() - 1;
+    while (current != -1) {
+        path.push_back(pieces[current]);
+        current = prev[current];
+    }
+    reverse(path.begin(), path.end());
+
+    return path;
+}
+
+int

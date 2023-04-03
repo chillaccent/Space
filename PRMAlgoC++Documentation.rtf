@@ -1,0 +1,64 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2708
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fnil\fcharset0 HelveticaNeue;\f1\fnil\fcharset0 Monaco;}
+{\colortbl;\red255\green255\blue255;\red199\green203\blue211;\red52\green54\blue66;}
+{\*\expandedcolortbl;;\cssrgb\c81961\c83529\c85882;\cssrgb\c26667\c27451\c32941;}
+\margl1440\margr1440\vieww27400\viewh16380\viewkind0
+\deftab720
+\pard\pardeftab720\sa400\partightenfactor0
+
+\f0\fs32 \cf2 \cb3 \expnd0\expndtw0\kerning0
+\outl0\strokewidth0 \strokec2 This code implements the A* search algorithm with a constrained heuristic to find the shortest path between a start and goal node within a given corridor. The corridor is defined by a vector of nodes, and is created by expanding a path found by the Probabilistic Roadmap (PRM) search algorithm.\
+The code defines a 
+\f1\fs28 Node
+\f0\fs32  struct to represent a node in the graph. Each node has 
+\f1\fs28 x
+\f0\fs32 , 
+\f1\fs28 y
+\f0\fs32 , and 
+\f1\fs28 z
+\f0\fs32  coordinates, as well as 
+\f1\fs28 f
+\f0\fs32 , 
+\f1\fs28 g
+\f0\fs32 , and 
+\f1\fs28 h
+\f0\fs32  values, and a pointer to its parent node. 
+\f1\fs28 f
+\f0\fs32  is the sum of 
+\f1\fs28 g
+\f0\fs32  and 
+\f1\fs28 h
+\f0\fs32 , where 
+\f1\fs28 g
+\f0\fs32  is the actual cost of reaching the node from the start node, and 
+\f1\fs28 h
+\f0\fs32  is the estimated cost of reaching the goal node from the node using the constrained heuristic.\
+The 
+\f1\fs28 euclidean_distance
+\f0\fs32  function computes the Euclidean distance between two nodes, which is used to calculate the heuristic values. The 
+\f1\fs28 is_node_within_corridor
+\f0\fs32  function checks if a given node is within the corridor bounds. The 
+\f1\fs28 constrained_heuristic
+\f0\fs32  function computes the Constrained Heuristic for a given node by calculating the minimum distance between the node and any node in the corridor, plus the Euclidean distance between that corridor node and the goal node.\
+The 
+\f1\fs28 CompareNodes
+\f0\fs32  class is used to compare nodes based on their 
+\f1\fs28 f
+\f0\fs32  values. The 
+\f1\fs28 astar_search
+\f0\fs32  function performs the A* search algorithm, using a priority queue to keep track of the nodes to be expanded. It iteratively expands the node with the lowest 
+\f1\fs28 f
+\f0\fs32  value, until the goal node is found or the priority queue is empty. When a node is expanded, its neighbors are checked to see if they are within the corridor bounds, and if so, their 
+\f1\fs28 f
+\f0\fs32 , 
+\f1\fs28 g
+\f0\fs32 , and 
+\f1\fs28 h
+\f0\fs32  values are updated and they are added to the priority queue if they are not already in it.\
+\pard\pardeftab720\partightenfactor0
+\cf2 In the 
+\f1\fs28 main
+\f0\fs32  function, a corridor is created by expanding the nodes in the PRM path by 2 units in each direction. The start and goal nodes are defined, and the 
+\f1\fs28 astar_search
+\f0\fs32  function is called with these inputs and the corridor, to find the shortest path. If the goal is not found, an empty vector is returned.\
+}

@@ -1,0 +1,501 @@
+#include <iostream>
+#include <vector>
+#include <cmath>
+#include <algorithm>
+#include <fstream>
+#include <unordered_set>
+#include <boost/heap/fibonacci_heap.hpp>
+
+using std::vector;
+using std::sqrt;
+using std::sort;
+using std::numeric_limits;
+using boost::heap::fibonacci_heap;
+
+// Define a struct to represent a puzzle piece with position and ID
+struct PuzzlePiece {
+    int id;
+    double x;
+    double y;
+    double z;
+    vector<PuzzlePiece> segments;
+};
+
+// Define a struct to represent an edge between two puzzle pieces
+struct Edge {
+    PuzzlePiece from;
+    PuzzlePiece to;
+    double cost;
+};
+
+// Define a struct to represent a node in the graph
+struct Node {
+    int x, y, z;
+    double f, g, h;
+    Node* parent;
+
+    Node(int x, int y, int z, double f, double g, double h, Node* parent) :
+        x(x), y(y), z(z), f(f), g(g), h(h), parent(parent) {}
+};
+
+struct HashNodePtr {
+    size_t operator()(const Node* node) const {
+        return reinterpret_cast<size_t>(node);
+    }
+};
+
+
+
+//Defines the distance between two pieces
+double distance(PuzzlePiece p1, PuzzlePiece p2) {
+    double dx = p1.x - p2.x;
+    double dy = p1.y - p2.y;
+    double dz = p1.z - p2.z;
+    return sqrt(dx*dx + dy*dy + dz*dz);
+}
+
+
+bool doSegmentsIntersect(PuzzlePiece s1, PuzzlePiece s2) {
+    // Extract the points from the input segments
+    double p1_x = s1.x;
+    double p1_y = s1.y;
+    double p1_z = s1.z;
+    double p2_x = s2.x;
+    double p2_y = s2.y;
+    double p2_z = s2.z;
+
+    // Calculate the cross products
+    double cross1_x = p2_x - p1_x;
+    double cross1_y = p2_y - p1_y;
+    double cross1_z = p2_z - p1_z;
+    double cross2_x = s2.x - s1.x;
+    double cross2_y = s2.y - s1.y;
+    double cross2_z = s2.z - s1.z;
+    double cross3_x = s1.x - s2.x;
+    double cross3_y = s1.y - s2.y;
+    double cross3_z = s1.z - s2.z;
+    double cross4_x = s2.x - s1.x;
+    double cross4_y = s2.y - s1.y;
+    double cross4_z = s2.z - s1.z;
+    double cross5_x = s1.x - s2.x;
+    double cross5_y = s1.y - s2.y;
+    double cross5_z = s1.z - s2.z;
+
+    double cross1 = sqrt(cross1_x * cross1_x + cross1_y * cross1_y + cross1_z * cross1_z);
+    double cross2 = sqrt(cross2_x * cross2_x + cross2_y * cross2_y + cross2_z * cross2_z);
+    double cross3 = sqrt(cross3_x * cross3_x + cross3_y * cross3_y + cross3_z * cross3_z);
+    double cross4 = sqrt(cross4_x * cross4_x + cross4_y * cross4_y + cross4_z * cross4_z);
+    double cross5 = sqrt(cross5_x * cross5_x + cross5_y * cross5_y + cross5_z * cross5_z);
+
+    double dot1 = cross1_x * cross2_x + cross1_y * cross2_y + cross1_z * cross2_z;
+    double dot2 = cross3_x * cross4_x + cross3_y * cross4_y + cross3_z * cross4_z;
+    double dot3 = cross5_x * cross4_x + cross5_y * cross4_y + cross5_z * cross4_z;
+
+    // Check if the line segments intersect
+    if (dot1 / (cross1 * cross2) < 0 && dot2 / (cross3 * cross4) < 0 && dot3 / (cross5 * cross4) < 0) {
+        return true;
+    }
+    return false;
+}
+
+double crossProduct(PuzzlePiece p1, PuzzlePiece p2) {
+    return p1.x * p2.y - p1.y * p2.x;
+}
+
+// Define a function to check if a puzzle piece is in the way of the vehicle
+bool inTheWay(PuzzlePiece p1, PuzzlePiece p2) {
+    for (const auto& seg1 : p1.segments) {
+        for (const auto& seg2 : p2.segments) {
+            if (doSegmentsIntersect(seg1, seg2)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+//Define a function to generate line segments for a PuzzlePiece
+vector<PuzzlePiece> computeSegments(const PuzzlePiece& piece) {
+    vector<PuzzlePiece> segments;
+    // Compute the endpoints of the line segments based on the piece's position and dimensions
+    // For example:
+    double x1 = piece.x - piece.width/2;
+    double y1 = piece.y;
+    double z1 = piece.z;
+    double x2 = piece.x + piece.width/2;
+    double y2 = piece.y;
+    double z2 = piece.z;
+    PuzzlePiece segment = {0, x1, y1, z1};
+    segment.segments.push_back({0, x2, y2, z2});
+    segments.push_back(segment);
+    // Compute additional line segments if necessary
+    return segments;
+}
+struct PuzzlePiece {
+    int id;
+    double x;
+    double y;
+    double z;
+    double width;
+    vector<PuzzlePiece> segments;
+};
+
+int main() {
+    const char* SHARED_MEM_NAME = "puzzle_piece_data";
+    const size_t SHARED_MEM_SIZE = sizeof(PuzzlePiece);
+    int shm_fd = shm_open(SHARED_MEM_NAME, O_RDONLY, 0666);
+    if (shm_fd == -1) {
+        perror("Failed to open shared memory");
+        return 1;
+    }
+    void* ptr = mmap(NULL, SHARED_MEM_SIZE, PROT_READ, MAP_SHARED, shm_fd, 0);
+    if (ptr == MAP_FAILED) {
+        perror("Failed to map shared memory");
+        return 1;
+    }
+    PuzzlePiece piece = *static_cast<PuzzlePiece*>(ptr);
+    vector<PuzzlePiece> segments;
+    // Compute the endpoints of the line segments based on the piece's position and dimensions
+    // Import the x, y, and z values from shared memory
+    double x1 = piece.x - piece.width/2;
+    double y1 = piece.y;
+    double z1 = piece.z;
+    double x2 = piece.x + piece.width/2;
+    double y2 = piece.y;
+    double z2 = piece.z;
+    PuzzlePiece segment = {0, x1, y1, z1};
+    segment.segments.push_back({0, x2, y2, z2});
+    segments.push_back(segment);
+    // Compute additional line segments if necessary
+    return 0;
+}
+
+
+
+// Define the PRM algorithm function
+vector<PuzzlePiece> prm(vector<PuzzlePiece> pieces, vector<PuzzlePiece> piecesInWay) {
+    // Generate a graph of nodes connected by edges using the PRM algorithm
+    vector<Edge> graph;
+    for (auto p1 : pieces) {
+        for (auto p2 : pieces) {
+            if (p1.id != p2.id && !inTheWay(p1, piecesInWay) && !inTheWay(p2, piecesInWay)) {
+                double dist = distance(p1, p2);
+                if (dist < 10.0) {  // Assume maximum distance between pieces is 10 units
+                    Edge e = {p1, p2, dist};
+                    graph.push_back(e);
+                }
+            }
+        }
+    }
+
+    // Sort edges by cost in ascending order
+    sort(graph.begin(), graph.end(), [](const Edge & a, const Edge & b) {
+        return a.cost < b.cost;
+    });
+
+
+    // Define a function to compute the heuristic cost between two puzzle pieces
+    double heuristic(PuzzlePiece p1, PuzzlePiece p2) {
+        return distance(p1, p2);
+    }
+
+    // Define a function to compute the Euclidean distance between two nodes
+    double euclidean_distance(Node* node1, Node* node2) {
+        int dx = node1->piece.x - node2->piece.x;
+        int dy = node1->piece.y - node2->piece.y;
+        int dz = node1->piece.z - node2->piece.z;
+        return sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+ // Define a function to compute the Constrained Heuristic for a node
+double constrained_heuristic(Node* node, vector<PuzzlePiece> piecesInWay) {
+    if (piecesInWay.empty()) {
+        return heuristic(node->piece, node->goalPiece);
+    }
+    double maxDist = 0.0;
+    for (const auto& p : piecesInWay) {
+        if (inTheWay(node->piece, {p})) {
+            double dist = distance(node->piece, p);
+            if (dist > maxDist) {
+                maxDist = dist;
+            }
+        }
+    }
+    return heuristic(node->piece, piecesInWay.back()) + maxDist;
+}
+
+
+
+// Define a function to check if a puzzle piece is in the goal state
+bool isGoal(PuzzlePiece piece, PuzzlePiece goal) {
+    return piece.id == goal.id && piece.x == goal.x && piece.y == goal.y && piece.z == goal.z;
+}
+
+
+
+// Define a function to get the neighbors of a node
+vector<Node*> get_neighbors(Node* node) {
+    vector<Node*> neighbors;
+    int x = node->x;
+    int y = node->y;
+    int z = node->z;
+    for (int i = -1; i <= 1; i++) {
+        for (int j = -1; j <= 1; j++) {
+            for (int k = -1; k <= 1; k++) {
+                if (i == 0 && j == 0 && k == 0) {
+                    continue;
+                }
+                int nx = x + i;
+                int ny = y + j;
+                int nz = z + k;
+                if (nx >= 0 && nx < GRID_SIZE && ny >= 0 && ny < GRID_SIZE && nz >= 0 && nz < GRID_SIZE) {
+                    Node* neighbor = new Node(nx, ny, nz, 0, 0, 0, nullptr);
+                    if (grid[nx][ny][nz] != OBSTACLE) {
+                        neighbors.push_back(neighbor);
+                    } else {
+                        delete neighbor; // deallocate memory if not added to neighbors
+                    }
+                }
+            }
+        }
+    }
+    return neighbors;
+}
+
+// Define a function to compare two nodes by their f-values
+class CompareNodes {
+public:
+    bool operator()(Node* node1, Node* node2) {
+        return node1->f > node2->f;
+    }
+};
+
+// Initialize start and goal nodes
+PuzzlePiece start = pieces.front();
+PuzzlePiece goal = pieces.back();
+Node startNode = {start, 0, heuristic(start, goal), heuristic(start, goal)};
+Node goalNode = {goal, numeric_limits<double>::max(), 0, 0};
+
+// Initialize the set of explored nodes
+unordered_set<int> explored;
+
+// Initialize the open set with the start node
+fibonacci_heap<Node> openSet;
+openSet.push(startNode);
+
+// Initialize the map of nodes to their parent nodes
+unordered_map<int, int> parent;
+
+// Define the A* search algorithm with Dijkstra's backup
+vector<Node*> astar_search_with_dijkstra(Node* start, Node* goal) {
+    // Initialize the open and closed lists for A*
+    fibonacci_heap<Node*, boost::heap::compare<CompareNodes>> open_list;
+    unordered_set<Node*, HashNodePtr> closed_list;
+
+    // Initialize the open and closed lists for Dijkstra's algorithm
+    priority_queue<Node*, vector<Node*>, CompareNodes> dijkstra_open_list;
+    unordered_set<Node*, HashNodePtr> dijkstra_closed_list;
+
+    // Add the start node to the open list for A*
+    start->g = 0;
+    start->h = heuristic(start, goal);
+    start->f = start->g + start->h;
+    open_list.push(start);
+
+    // Add the start node to the open list for Dijkstra's algorithm
+    start->g = 0;
+    start->parent = nullptr;
+    dijkstra_open_list.push(start);
+
+    while (!open_list.empty()) {
+        // Get the node with the lowest f-value
+        Node* current = open_list.top();
+        open_list.pop();
+
+        // Check if the current node is the goal node
+        if (current == goal) {
+            // Reconstruct the path from the start to the goal node
+            vector<Node*> path;
+            Node* node = current;
+            while (node != NULL) {
+                path.push_back(node);
+                node = node->parent;
+            }
+            reverse(path.begin(), path.end());
+            return path;
+        }
+
+        // Add the current node to the closed list for A*
+        closed_list.insert(current);
+
+        // Get the neighbors of the current node
+        vector<Node*> neighbors = get_neighbors(current);
+
+        for (Node* neighbor : neighbors) {
+            // Compute the tentative g-value for the neighbor
+            double tentative_g = current->g + euclidean_distance(current, neighbor);
+
+            // Check if the neighbor is in the closed list for A*
+            if (closed_list.count(neighbor) > 0) {
+                continue;
+            }
+
+            // Check if the neighbor is already in the open list for A*
+            bool neighbor_in_open_list =false;
+        for (auto it = open_list.ordered_begin(); it != open_list.ordered_end(); ++it) {
+            if (*it == neighbor) {
+                neighbor_in_open_list = true;
+                break;
+            }
+        }
+
+        // If the neighbor is not in the open list for A*, add it
+        if (!neighbor_in_open_list) {
+            neighbor->parent = current;
+            neighbor->g = tentative_g;
+            neighbor->h = heuristic(neighbor, goal);
+            neighbor->f = neighbor->g + neighbor->h;
+            open_list.push(neighbor);
+        }
+        // If the neighbor is already in the open list for A*, update its g-value if the new g-value is lower
+        else {
+            for (auto it = open_list.ordered_begin(); it != open_list.ordered_end(); ++it) {
+                if (*it == neighbor) {
+                    if (tentative_g < neighbor->g) {
+                        neighbor->parent = current;
+                        neighbor->g = tentative_g;
+                        neighbor->f = neighbor->g + neighbor->h;
+                        open_list.increase(it, neighbor);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Check if the neighbor is in the closed list for Dijkstra's algorithm
+        if (dijkstra_closed_list.count(neighbor) > 0) {
+            continue;
+        }
+
+        // Compute the tentative distance for the neighbor in Dijkstra's algorithm
+        double tentative_distance = current->g + euclidean_distance(current, neighbor);
+
+        // If the neighbor is not in the open list for Dijkstra's algorithm, add it
+        if (!neighbor_in_open_list) {
+            neighbor->parent = current;
+            neighbor->g = tentative_distance;
+            dijkstra_open_list.push(neighbor);
+        }
+        // If the neighbor is already in the open list for Dijkstra's algorithm, update its g-value if the new g-value is lower
+        else {
+            for (auto it = dijkstra_open_list.begin(); it != dijkstra_open_list.end(); ++it) {
+                if (*it == neighbor) {
+                    if (tentative_distance < neighbor->g) {
+                        neighbor->parent = current;
+                        neighbor->g = tentative_distance;
+                        dijkstra_open_list.push(neighbor);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    // Add the current node to the closed list for Dijkstra's algorithm
+    dijkstra_closed_list.insert(current);
+}
+
+// If there is no path from the start to the goal node, return an empty vector
+return vector<Node*>();
+}
+
+// If the goal node is not reachable from the start node, return an empty path
+return vector<PuzzlePiece>();
+}
+
+int main() {
+// Load the puzzle pieces from file
+ifstream file("puzzle.txt");
+vector<PuzzlePiece> pieces;
+while (file) {
+PuzzlePiece p;
+file >> p.id >> p.x >> p.y >> p.z;
+pieces.push_back(p);
+}
+pieces.pop_back(); // Remove the extra piece added at the end of the file
+// Define the puzzle pieces in the way of the vehicle
+vector<P node : graph) {
+// Check if the neighbor has already been explored
+if (explored.find(node.to.id) != explored.end()) {
+continue;
+}
+
+        // Compute the cost to reach the neighbor through the current node
+        double tentative_g = current.g + node.cost;
+
+        // Check if the neighbor is already in the open set
+        Node neighbor = {node.to, tentative_g, 0, 0};
+        auto it = openSet.find(neighbor);
+        if (it != openSet.end()) {
+            // Check if the new path to the neighbor is better than the previous path
+            if (tentative_g < it->g) {
+                // Update the neighbor's cost and parent
+                it->g = tentative_g;
+                parent[node.to.id] = current.piece.id;
+                // Update the neighbor's estimated total cost
+                it->f = it->g + it->h;
+                // Update the neighbor's position in the open set
+                openSet.increase(it);
+            }
+        } else {
+            // Add the neighbor to the open set
+            neighbor.h = constrained_heuristic(&neighbor, piecesInWay);
+            neighbor.f = neighbor.g + neighbor.h;
+            openSet.push(neighbor);
+            // Set the neighbor's parent to the current node
+            parent[node.to.id] = current.piece.id;
+        }
+    }
+}
+
+// If we reach this point, then there is no path from start to goal
+return vector<PuzzlePiece>();{
+}
+
+int main() {
+// Read in the input file
+ifstream fin("input.txt");
+int n, m;
+fin >> n >> m;
+vector<PuzzlePiece> pieces(n);
+vector<PuzzlePiece> piecesInWay(m);
+for (int i = 0; i < n; i++) {
+int id;
+double x, y, z;
+fin >> id >> x >> y >> z;
+pieces[i] = {id, x, y, z};
+}
+for (int i = 0; i < m; i++) {
+int id;
+double x, y, z;
+fin >> id >> x >> y >> z;
+piecesInWay[i] = {id, x, y, z};
+}
+fin.close();
+
+// Run the PRM algorithm
+vector<PuzzlePiece> path = prm(pieces, piecesInWay);
+
+// Output the path to the output file
+ofstream fout("output.txt");
+if (!path.empty()) {
+    for (auto p : path) {
+        fout << p.id << " " << p.x << " " << p.y << " " << p.z << "\n";
+    }
+} else {
+    fout << "No path found\n";
+}
+fout.close();
+
+return 0;
+}
