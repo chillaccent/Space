@@ -1,0 +1,566 @@
+#include <iostream>
+#include <vector>
+#include <random>
+#include <algorithm>
+#include <unordered_map>
+#include <boost/graph/adjacency_list.hpp>
+#include <boost/graph/dijkstra_shortest_paths.hpp>
+#include <boost/graph/astar_search.hpp>
+#include <boost/graph/betweenness_centrality.hpp>
+#include <boost/heap/fibonacci_heap.hpp>
+#include <boost/property_map/property_map.hpp>
+
+
+using namespace std;
+
+struct VertexProperty {
+    std::vector<double> coords;
+    vector<double> position;
+    unsigned long index;
+};
+
+
+
+
+// Define a custom property tag for the vertex position
+struct vertex_position_t {
+    typedef boost::vertex_property_tag kind;
+};
+
+typedef boost::adjacency_list<boost::listS, boost::vecS, boost::undirectedS, VertexProperty, boost::property<boost::edge_weight_t, double> > Graph;
+
+typedef boost::graph_traits<Graph>::vertex_descriptor Vertex;
+typedef boost::graph_traits<Graph>::edge_descriptor Edge;
+
+// Vertex index map
+std::map<Vertex, unsigned long> vertex_index_map;
+
+// ProblemSpace and other required structures should be defined before they are used
+struct ProblemSpace {
+    double L; // Length of the cube
+    vector<vector<double> > puzzle_piece_positions; // Positions of the puzzle pieces
+    vector<vector<double> > cubesat_positions; // Positions of the CubeSats
+};
+
+
+
+
+vector<double> create_vector(double x, double y, double z) {
+    vector<double> vec;
+    vec.push_back(x);
+    vec.push_back(y);
+    vec.push_back(z);
+    return vec;
+}
+
+double euclidean_distance(const vector<double>& p1, const vector<double>& p2) {
+    if (p1.size() != p2.size()) {
+    throw std::invalid_argument("Vectors must have the same size");
+    }
+    double sum = 0;
+    for (int i = 0; i < p1.size(); ++i) {
+    sum += pow(p1[i] - p2[i], 2);
+    }
+    return sqrt(sum);
+}
+double distance(const Graph& graph, Vertex v1, Vertex v2) {
+const vector<double> p1 = graph[v1].coords;
+const vector<double> p2 = graph[v2].coords;
+    return euclidean_distance(p1, p2);
+}
+
+
+double objective_function(const vector<double>& x) {
+    return -(x[0]*x[0] + x[1]*x[1]);
+}
+
+vector<double> cross_entropy_method(int n_iterations, int n_samples, double elite_percent, int n_parameters, double mean_init, double std_init, double learning_rate) {
+    // Initialize the mean and standard deviation of the sampling distribution
+    vector<double> mean(n_parameters, mean_init);
+    vector<double> std(n_parameters, std_init);
+
+    // Define a random number generator
+    random_device rd;
+    mt19937 gen(rd());
+    normal_distribution<> dist(0, 1);
+
+    // Iterate over the specified number of iterations
+    for (int i = 0; i < n_iterations; i++) {
+        // Generate samples from the sampling distribution
+        vector<vector<double> > samples(n_samples, vector<double>(n_parameters));
+        for (int j = 0; j < n_samples; j++) {
+            for (int k = 0; k < n_parameters; k++) {
+                samples[j][k] = mean[k] + std[k] * dist(gen);
+            }
+        }
+
+        // Evaluate the objective function for each sample
+        vector<double> values(n_samples);
+        for (int j = 0; j < n_samples; j++) {
+            values[j] = objective_function(samples[j]);
+        }
+
+        // Determine the elite samples
+        int n_elite = n_samples * elite_percent;
+        vector<double> elite_values(n_elite);
+        vector<vector<double> > elite_samples(n_elite, vector<double>(n_parameters));
+        partial_sort_copy(values.begin(), values.end(), elite_values.begin(), elite_values.end(), greater<double>());
+        for (int j = 0; j < n_elite; j++) {
+            auto it = find(values.begin(), values.end(), elite_values[j]);
+            int index = distance(values.begin(), it);
+            elite_samples[j] = samples[index];
+        }
+
+        // Update the mean and standard deviation of the sampling distribution
+        vector<double> new_mean(n_parameters);
+        for (int j = 0; j < n_parameters; j++) {
+            double sum = 0.0;
+            for (int k = 0; k < n_elite; k++) {
+                sum += elite_samples[k][j];
+            }
+            new_mean[j] = sum / n_elite;
+        }
+
+        vector<double> new_std(n_parameters);
+        for (int j = 0; j < n_parameters; j++) {
+            double variance = 0.0;
+            for (int k = 0; k < n_elite; k++) {
+                variance += pow(elite_samples[k][j] - new_mean[j], 2);
+            }
+            new_std[j] = sqrt(variance / n_elite);
+        }
+
+        // Update the mean and standard deviation using the learning rate
+        for (int j = 0; j < n_parameters; j++) {
+            mean[j] = (1 - learning_rate) * mean[j] + learning_rate * new_mean[j];
+            std[j] = (1 - learning_rate) * std[j] + learning_rate * new_std[j];
+        }
+    }
+
+    return mean;
+}
+
+
+
+bool dijkstra_search(Graph& graph, Vertex start, Vertex goal, vector<Vertex>& path) {
+
+  // Initialize the predecessors and distances vectors.
+  vector<Vertex> predecessors(boost::num_vertices(graph));
+  vector<double> distances(boost::num_vertices(graph), std::numeric_limits<double>::max());
+
+  // Initialize the visited map.
+  unordered_map<Vertex, bool> visited;
+
+  // Initialize the Fibonacci heap.
+  boost::heap::fibonacci_heap<pair<double, Vertex>, boost::heap::compare<greater<pair<double, Vertex> > > > frontier;
+
+  // Initialize the distance from the start node to the start node to 0.
+  distances[start] = 0;
+
+  // Add the start node to the frontier.
+  frontier.push(make_pair(0, start));
+
+  // While the frontier is not empty, do the following:
+  while (!frontier.empty()) {
+
+    // Remove the node with the lowest distance from the frontier.
+    Vertex current = frontier.top().second;
+    frontier.pop();
+
+    // If the current node is the goal node, then we have found a path.
+    if (current == goal) {
+
+      // Reconstruct the path from the goal node to the start node.
+      path.push_back(current);
+      for (Vertex v = goal; v != start; v = predecessors[v]) {
+        path.push_back(v);
+      }
+      path.push_back(start);
+
+      // Reverse the path so that it is in the correct order.
+      reverse(path.begin(), path.end());
+
+      // Return true.
+      return true;
+    }
+
+    // Mark the current node as visited.
+    visited[current] = true;
+
+    // For each neighbor of the current node, do the following:
+    for (auto it = boost::adjacent_vertices(current, graph).first; it != boost::adjacent_vertices(current, graph).second; ++it) {
+
+      // Get the neighbor node.
+      Vertex neighbor = *it;
+
+      // Get the weight of the edge between the current node and the neighbor node.
+      double new_distance = distances[current] + boost::get(boost::edge_weight, graph, boost::edge(current, neighbor, graph).first);
+
+      // If the neighbor node is not visited and the new distance is less than the stored distance, then do the following:
+      if (!visited[neighbor] && new_distance < distances[neighbor]) {
+
+        // Update the distance to the neighbor node.
+        distances[neighbor] = new_distance;
+
+        // Update the predecessor of the neighbor node.
+        predecessors[neighbor] = current;
+
+        // Add the neighbor node to the frontier.
+        frontier.push(make_pair(new_distance, neighbor));
+      }
+    }
+  }
+
+  // The goal node is unreachable.
+  return false;
+}
+
+
+bool a_star_search(Graph& graph, Vertex start, Vertex goal, vector<Vertex>& path) {
+
+  // Initialize the predecessors and distances vectors.
+  vector<Vertex> predecessors(boost::num_vertices(graph));
+  vector<double> distances(boost::num_vertices(graph));
+
+  // Initialize the visited map.
+  unordered_map<Vertex, bool> visited;
+
+  // Initialize the Fibonacci heap.
+  boost::heap::fibonacci_heap<pair<double, Vertex>, boost::heap::compare<greater<pair<double, Vertex> > > > frontier;
+
+  // Initialize the distance from the start node to the start node to 0.
+  distances[start] = 0;
+
+  // While the frontier is not empty, do the following:
+  while (!frontier.empty()) {
+
+    // Remove the node with the lowest estimated cost from the frontier.
+    Vertex current = frontier.top().second;
+    frontier.pop();
+
+    // If the current node is the goal node, then we have found a path.
+    if (current == goal) {
+
+      // Reconstruct the path from the goal node to the start node.
+      path.push_back(current);
+      for (Vertex v = goal; v != start; v = predecessors[v]) {
+        path.push_back(v);
+      }
+      path.push_back(start);
+
+      // Reverse the path so that it is in the correct order.
+      reverse(path.begin(), path.end());
+
+      // Return true.
+      return true;
+    }
+
+    // Mark the current node as visited.
+    visited[current] = true;
+
+    // For each neighbor of the current node, do the following:
+    for (auto it = boost::adjacent_vertices(current, graph).first; it != boost::adjacent_vertices(current, graph).second; ++it) {
+
+      // Get the neighbor node.
+      Vertex neighbor = *it;
+
+      // Get the weight of the edge between the current node and the neighbor node.
+      double new_distance = distances[current] + boost::get(boost::edge_weight, graph, boost::edge(current, neighbor, graph).first);
+
+      // If the neighbor node is not visited or the new distance is less than the stored distance, then do the following:
+      if (!visited[neighbor] || new_distance < distances[neighbor]) {
+
+        // Update the distance to the neighbor node.
+        distances[neighbor] = new_distance;
+
+        // Update the predecessor of the neighbor node.
+        predecessors[neighbor] = current;
+
+        // Add the neighbor node to the frontier.
+        frontier.push(make_pair(distances[current] + distance(graph, current, neighbor), neighbor));
+      }
+    }
+  }
+
+  // The goal node is unreachable.
+  return false;
+}
+
+
+double ida_star_search(Graph& graph, Vertex current, Vertex goal, vector<Vertex>& path, double cost, double bound) {
+
+  // Calculate the estimated cost of the path from the current node to the goal node.
+  double f = cost + distance(graph, current, goal);
+
+  // If the estimated cost is greater than the bound, then there is no need to explore this path further.
+  if (f > bound) {
+    return f;
+  }
+
+  // If the current node is the goal node, then we have found a path.
+  if (current == goal) {
+    path.push_back(current);
+    return 0;
+  }
+
+  // Find the minimum cost of any neighbor of the current node that is not in the path.
+  double min_cost = numeric_limits<double>::max();
+  for (auto neighbor_it = boost::adjacent_vertices(current, graph).first; neighbor_it != boost::adjacent_vertices(current, graph).second; neighbor_it++) {
+    Vertex neighbor = *neighbor_it;
+    vector<Vertex>::iterator path_it = find(path.begin(), path.end(), neighbor);
+    if (path_it != path.end()) {
+      continue;
+    }
+    path.push_back(neighbor);
+    double neighbor_cost = ida_star_search(graph, neighbor, goal, path, cost + boost::get(boost::edge_weight, graph, boost::edge(current, neighbor, graph).first), bound);
+    if (neighbor_cost == 0) {
+      return 0;
+    }
+    if (neighbor_cost < min_cost) {
+      min_cost = neighbor_cost;
+    }
+    path.pop_back();
+  }
+
+  // Return the minimum cost of any neighbor of the current node that is not in the path.
+  return min_cost;
+}
+
+
+bool ida_star_search(Graph& graph, Vertex start, Vertex goal, vector<Vertex>& path) {
+  // Initialize the bound to the distance from the start node to the goal node.
+  double bound = distance(graph, start, goal);
+
+  // While the bound is not infinity, do the following:
+  while (bound != numeric_limits<double>::max()) {
+    // Initialize the cost to 0 and the path to the start node.
+    double cost = 0;
+    vector<Vertex> temp_path;
+    temp_path.push_back(start);
+
+    // Call the recursive function to search for a path from the start node to the goal node with a bound of `bound`.
+    double result = ida_star_search(graph, start, goal, temp_path, cost, bound);
+
+    // If a path is found, then return true.
+    if (result == 0) {
+      path = temp_path;
+      return true;
+    }
+
+    // If the recursive function returns infinity, then the goal node is unreachable.
+    if (result == numeric_limits<double>::max()) {
+      return false;
+    }
+
+    // Update the bound to the result of the recursive function.
+    bound = result;
+  }
+
+  // The goal node is unreachable.
+  return false;
+}
+
+
+vector<Vertex> prm(const ProblemSpace& problem_space, double distance_threshold, const vector<vector < double > > & puzzle_piece_positions) {
+    Graph graph;
+    vector<Vertex> puzzle_piece_vertices;
+    vector<Vertex> cubesat_vertices;
+
+// Add puzzle piece vertices to the graph
+unsigned long vertex_index = 0;
+for (auto pos : puzzle_piece_positions) {
+    Vertex v = boost::add_vertex(graph);
+    graph[v].position = pos;
+    graph[v].index = vertex_index++;
+    puzzle_piece_vertices.push_back(v);
+}
+
+// Add CubeSat vertices to the graph
+for (auto pos : problem_space.cubesat_positions) {
+    Vertex v = boost::add_vertex(graph);
+    graph[v].position = pos;
+    graph[v].index = vertex_index++;
+    cubesat_vertices.push_back(v);
+}
+
+
+
+
+// Connect the vertices in the graph based on distance threshold
+for (int i = 0; i < puzzle_piece_vertices.size(); i++) {
+    for (int j = i + 1; j < puzzle_piece_vertices.size(); j++) {
+        double d = euclidean_distance(graph[cubesat_vertices[i]].position, graph[puzzle_piece_vertices[j]].position);
+        if (d <= distance_threshold) {
+            Edge e;
+            bool success;
+            tie(e, success) = boost::add_edge(puzzle_piece_vertices[i], puzzle_piece_vertices[j], graph);
+            if (success) {
+                boost::put(boost::edge_weight, graph, e, d);
+            }
+        }
+    }
+}
+
+for (int i = 0; i < cubesat_vertices.size(); i++) {
+    for (int j = 0; j < puzzle_piece_vertices.size(); j++) {
+        double d = euclidean_distance(graph[cubesat_vertices[i]].position, graph[puzzle_piece_vertices[j]].position);
+        if (d <= distance_threshold) {
+            Edge e;
+            bool success;
+            tie(e, success) = boost::add_edge(cubesat_vertices[i], puzzle_piece_vertices[j], graph);
+            if (success) {
+                boost::put(boost::edge_weight, graph, e, d);
+            }
+        }
+    }
+}
+
+
+    
+
+    return puzzle_piece_vertices;
+
+}
+
+vector<Vertex> get_cubesat_vertices(Graph& graph, const vector<vector<double> >& cubesat_positions) {
+    vector<Vertex> cubesat_vertices;
+
+    // Iterate through all vertices in the graph
+    for (auto it = boost::vertices(graph).first; it != boost::vertices(graph).second; ++it) {
+        Vertex v = *it;
+        VertexProperty vertex_prop = graph[v];
+
+        // Check if the vertex position matches any of the CubeSat positions
+        if (find(cubesat_positions.begin(), cubesat_positions.end(), vertex_prop.position) != cubesat_positions.end()) {
+            cubesat_vertices.push_back(v);
+        }
+    }
+
+    return cubesat_vertices;
+}
+
+
+vector<Vertex> find_path(Graph& graph, const vector<Vertex>& puzzle_piece_vertices, const vector<Vertex>& cubesat_vertices, const ProblemSpace& problem_space, double distance_threshold) {
+    // PRM algorithm steps
+    vector<Vertex> candidate_nodes;
+    for (int i = 0; i < 1000; ++i) { // Sample 1000 candidate nodes
+        Vertex v = boost::add_vertex(graph);
+       vertex_index_map[v] = puzzle_piece_vertices.size() + cubesat_vertices.size() + candidate_nodes.size();
+        candidate_nodes.push_back(v);
+        // Connect the candidate node to nearby vertices in the graph
+        for (auto pp_v : puzzle_piece_vertices) {
+            double dist = euclidean_distance(graph[v].coords, graph[pp_v].coords);
+            if (dist <= distance_threshold) {
+                Edge e;
+                bool success;
+                tie(e, success) = boost::add_edge(v, pp_v, graph);
+                boost::property_map<Graph, boost::edge_weight_t>::type EdgeWeightMap = boost::get(boost::edge_weight, graph);
+                boost::put(EdgeWeightMap, e, dist);
+                //boost::put(boost::edge_weight, e, dist);
+            }
+        }
+        for (auto cs_v : cubesat_vertices) {
+           double dist = euclidean_distance(graph[v].coords, graph[cs_v].coords);
+            if (dist <= distance_threshold) {
+                Edge e;
+                bool success;
+                tie(e, success) = boost::add_edge(v, cs_v, graph);
+                boost::property_map<Graph, boost::edge_weight_t>::type EdgeWeightMap = boost::get(boost::edge_weight, graph);
+                boost::put(EdgeWeightMap, e, dist);
+            }
+        }
+    }
+// Compute betweenness centrality of puzzle piece vertices
+std::vector<double> centrality(boost::num_vertices(graph));
+boost::property_map<Graph, boost::vertex_index_t>::type VertexIndexMap = boost::get(boost::vertex_index, graph);
+
+boost::brandes_betweenness_centrality(
+    graph,
+    boost::centrality_map(boost::make_iterator_property_map(centrality.begin(), VertexIndexMap)));
+
+
+// Find the two most central puzzle piece vertices
+int start_index = 0;
+int goal_index = 1;
+for (int i = 2; i < puzzle_piece_vertices.size(); ++i) {
+    if (centrality[i] > centrality[start_index]) {
+        goal_index = start_index;
+        start_index = i;
+    } else if (centrality[i] > centrality[goal_index]) {
+        goal_index = i;
+    }
+}
+
+
+
+Vertex start = puzzle_piece_vertices[start_index];
+Vertex goal = puzzle_piece_vertices[goal_index];
+
+// Find a path from the start node to the goal node using IDA*, A*, or Dijkstra
+//Vertex start = cubesat_vertices[0]; // Change this line to use a cubesat position as the fixed start node
+//Vertex goal = puzzle_piece_vertices[0];
+vector<Vertex> path;
+bool success = false;
+
+// Try IDA*
+success = ida_star_search(graph, start, goal, path);
+if (!success) {
+    // Try A*
+    success = a_star_search(graph, start, goal, path);
+    if (!success) {
+        // Try Dijkstra
+        success = dijkstra_search(graph, start, goal, path);
+    }
+
+
+
+
+    return path;
+}
+
+}
+
+
+
+
+//#include <iostream>
+//#include "pathfinding.h" // Assuming you've saved the code in a file named "pathfinding.h"
+
+int main() {
+    // Define a sample problem space
+    ProblemSpace problem_space;
+    problem_space.L = 100;
+    // Setting the CubeSat positions
+    problem_space.cubesat_positions.push_back(create_vector(0, 0, 0));
+    problem_space.cubesat_positions.push_back(create_vector(50, 50, 50));
+
+    // Setting the puzzle piece positions
+    problem_space.puzzle_piece_positions.push_back(create_vector(10, 10, 10));
+    problem_space.puzzle_piece_positions.push_back(create_vector(20, 20, 20));
+    problem_space.puzzle_piece_positions.push_back(create_vector(30, 30, 30));
+    problem_space.puzzle_piece_positions.push_back(create_vector(40, 40, 40));
+
+    // Define the distance threshold
+    double distance_threshold = 1.0;
+
+    // Call the find_path function with the required parameters
+    Graph graph;
+    vector<Vertex> puzzle_piece_vertices = prm(problem_space, distance_threshold, problem_space.puzzle_piece_positions);
+    vector<Vertex> cubesat_vertices = get_cubesat_vertices(graph, problem_space.cubesat_positions); // Updated line
+    vector<Vertex> path = find_path(graph, puzzle_piece_vertices, cubesat_vertices, problem_space, distance_threshold);
+
+    // Display the result
+    if (path.empty()) {
+        cout << "No path found!" << endl;
+    } else {
+        cout << "Path found:" << endl;
+        for (const Vertex& v : path) {
+            // Get the vertex property
+            VertexProperty vertex_prop = graph[v];
+
+            cout << "[" << vertex_prop.coords[0] << ", " << vertex_prop.coords[1] << ", " << vertex_prop.coords[2] << "]" << endl;
+        }
+    }
+
+    return 0;
+}
